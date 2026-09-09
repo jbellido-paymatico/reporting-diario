@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pruebas del visor de reporting</title>
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #172033; }
+    .pass { color: #18794e; }
+    .fail { color: #c9372c; }
+    pre { white-space: pre-wrap; background: #f4f6f8; padding: 12px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Pruebas del visor</h1>
+  <p id="summary">Ejecutando…</p>
+  <ol id="results"></ol>
+
+  <script src="app.js"></script>
+  <script>
+    const reportes = [
+      { fecha: '2026-09-09', contenido: '# Hoy' },
+      { fecha: '2026-09-08', contenido: '# Ayer' },
+      { fecha: '2026-09-05', contenido: '# Anterior' }
+    ];
+    const tests = [];
+    const test = (name, fn) => tests.push({ name, fn });
+    const equal = (actual, expected) => {
+      if (actual !== expected) throw new Error(`Esperado: ${expected}\nRecibido: ${actual}`);
+    };
+    const ok = (value, message) => {
+      if (!value) throw new Error(message || 'La condición no se ha cumplido');
+    };
+
+    test('una fecha explícita existente carga exactamente ese reporte', () => {
+      const result = window.ReportApp.resolveReport(reportes, '2026-09-08', '2026-09-09');
+      equal(result.report.fecha, '2026-09-08');
+      equal(result.missingToday, false);
+      equal(result.requestedMissing, false);
+    });
+
+    test('sin parámetro se carga el reporte de hoy cuando existe', () => {
+      const result = window.ReportApp.resolveReport(reportes, null, '2026-09-09');
+      equal(result.report.fecha, '2026-09-09');
+      equal(result.missingToday, false);
+    });
+
+    test('sin reporte de hoy se carga el anterior más reciente y se activa el aviso', () => {
+      const result = window.ReportApp.resolveReport(reportes.slice(1), null, '2026-09-09');
+      equal(result.report.fecha, '2026-09-08');
+      equal(result.missingToday, true);
+    });
+
+    test('una fecha explícita inexistente no hace fallback silencioso', () => {
+      const result = window.ReportApp.resolveReport(reportes, '2026-09-07', '2026-09-09');
+      equal(result.report, null);
+      equal(result.missingToday, false);
+      equal(result.requestedMissing, true);
+    });
+
+    test('el Markdown se renderiza y el HTML de entrada queda escapado', () => {
+      const closingScript = '</scr' + 'ipt>';
+      const markdown = '# Hola <script>alert(1)' + closingScript + '\n\n[Seguro](https://example.com)\n\n| A | B |\n|---|---|\n| 1 | **2** |';
+      const html = window.ReportApp.markdownToHtml(markdown);
+      ok(html.includes('<h1>Hola &lt;script&gt;alert(1)&lt;/script&gt;</h1>'), 'Falta el título escapado');
+      ok(html.includes('href="https://example.com"'), 'Falta el enlace seguro');
+      ok(html.includes('<table>'), 'Falta la tabla');
+      ok(html.includes('<strong>2</strong>'), 'Falta el texto destacado');
+      ok(!html.includes('<script>'), 'Se ha permitido HTML de entrada');
+    });
+
+    test('los enlaces con esquemas inseguros no son navegables', () => {
+      const html = window.ReportApp.markdownToHtml('[No](javascript:alert(1))');
+      ok(!html.includes('href='), 'Se ha permitido un enlace javascript:');
+    });
+
+    const createFixture = () => {
+      const fixture = document.implementation.createHTMLDocument('Visor');
+      fixture.body.innerHTML = `
+        <main data-report-app>
+          <div data-missing-today hidden></div>
+          <span data-report-count></span>
+          <input data-date-input type="date">
+          <nav data-day-list></nav>
+          <p data-report-kicker></p>
+          <h1 data-report-date></h1>
+          <article data-report-content></article>
+          <section data-empty-state hidden>
+            <h2 data-empty-title></h2>
+            <p data-empty-copy></p>
+          </section>
+        </main>`;
+      return fixture;
+    };
+
+    test('la interfaz muestra el fallback y hace visible el aviso de hoy', () => {
+      const fixture = createFixture();
+      window.ReportApp.renderApp(fixture, reportes.slice(1), { search: '', pathname: '/web-report/index.html' }, '2026-09-09');
+      equal(fixture.querySelector('[data-date-input]').value, '2026-09-08');
+      ok(fixture.querySelector('[data-report-content]').innerHTML.includes('Ayer'), 'No se ha mostrado el reporte anterior');
+      equal(fixture.querySelector('[data-missing-today]').hidden, false);
+      equal(fixture.querySelector('[data-empty-state]').hidden, true);
+    });
+
+    test('la interfaz muestra un estado vacío para una fecha solicitada inexistente', () => {
+      const fixture = createFixture();
+      window.ReportApp.renderApp(fixture, reportes, { search: '?fecha=2026-09-07', pathname: '/web-report/index.html' }, '2026-09-09');
+      equal(fixture.querySelector('[data-report-content]').hidden, true);
+      equal(fixture.querySelector('[data-empty-state]').hidden, false);
+      ok(fixture.querySelector('[data-empty-title]').textContent.includes('no encontrado'), 'Falta el mensaje de fecha inexistente');
+      equal(fixture.querySelector('[data-missing-today]').hidden, true);
+    });
+
+    (async () => {
+      const results = document.querySelector('#results');
+      let passed = 0;
+      for (const current of tests) {
+        const item = document.createElement('li');
+        try {
+          await current.fn();
+          item.className = 'pass';
+          item.textContent = `OK — ${current.name}`;
+          passed += 1;
+        } catch (error) {
+          item.className = 'fail';
+          item.innerHTML = `FALLO — ${current.name}<pre></pre>`;
+          item.querySelector('pre').textContent = error.stack || error.message;
+        }
+        results.appendChild(item);
+      }
+      const summary = document.querySelector('#summary');
+      summary.textContent = `${passed}/${tests.length} pruebas superadas`;
+      summary.className = passed === tests.length ? 'pass' : 'fail';
+      document.title = `${passed === tests.length ? 'PASS' : 'FAIL'} — Pruebas del visor`;
+    })();
+  </script>
+</body>
+</html>

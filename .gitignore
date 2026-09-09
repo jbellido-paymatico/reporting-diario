@@ -1,0 +1,13 @@
+# Reportes y datos generados localmente
+/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
+/web-report/reportes.js
+
+# Artefactos de pruebas y perfiles temporales del navegador
+/.tmp-*
+
+# Archivos del sistema y editores
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
+
